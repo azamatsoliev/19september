@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="uz" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+  <meta name="google" content="notranslate">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Volidam</title>
+
+  <!-- The serif is only needed for the final words, so it loads without holding anything up. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" media="print" onload="this.media='all'"
+        href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&display=swap">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --ground: #030202;            /* the room: black, with the faintest warmth */
+      --shade: 6, 4, 3;             /* warm black used by the vignette */
+      --ink: 238, 228, 211;         /* warm off-white for the final words */
+
+      /* These three are overwritten from TIMING in the script below. */
+      --fade: 4500ms;
+      --photo-delay: 600ms;
+      --message-fade: 5500ms;
+
+      --ease: cubic-bezier(.37, 0, .63, 1);       /* soft in, soft out */
+      --settle: cubic-bezier(.22, .61, .36, 1);   /* long, gentle arrival */
+
+      --room: 100vh;
+      --photo: min(68vmin, calc(var(--room) - 14rem));
+    }
+    @supports (height: 100dvh) {
+      :root { --room: 100dvh; }
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      overscroll-behavior: none;
+      scrollbar-width: none;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar { display: none; }
+
+    body {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+
+    img {
+      -webkit-user-drag: none;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .stage {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      background: var(--ground);
+      isolation: isolate;
+      contain: layout paint style;
+    }
+    .stage.is-idle { cursor: none; }
+
+    /* ——— One memory ——— */
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: none;
+      opacity: 0;
+      transition: opacity var(--fade) var(--ease);
+    }
+    .slide.is-mounted { display: block; will-change: opacity; }
+    .slide.is-visible { opacity: 1; }
+    .slide.is-visible.is-leaving { opacity: 0; }
+
+    .slide__atmosphere,
+    .slide__halo,
+    .slide__soft,
+    .slide__photo {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      display: block;
+      max-width: none;
+    }
+
+    /* 1. The same photograph, far larger than the screen, blurred into a dim warm atmosphere.
+          Drawn small and scaled up: the blur hides the scaling and the GPU does less work. */
+    .slide__atmosphere {
+      width: 32vmax;
+      height: 32vmax;
+      object-fit: cover;
+      filter: blur(16px) brightness(.42) saturate(1.1) sepia(.12);
+      transform: translate(-50%, -50%) scale(4.1);
+      transition: transform 22s var(--settle);
+    }
+    .slide.is-mounted .slide__atmosphere { will-change: transform; }
+    .slide.is-visible .slide__atmosphere { transform: translate(-50%, -50%) scale(4.35); }
+
+    /* 2. The photograph's own light, spilling well past its edges. */
+    .slide__halo {
+      width: var(--photo);
+      height: var(--photo);
+      object-fit: cover;
+      filter: blur(44px) brightness(.72) saturate(1.1);
+      opacity: .85;
+      transform: translate(-50%, -50%) scale(1.4);
+    }
+
+    /* 3. A softened copy exactly behind the photograph, so sharp melts into soft, not into black. */
+    .slide__soft {
+      width: var(--photo);
+      height: var(--photo);
+      object-fit: cover;
+      filter: blur(14px) brightness(.88) saturate(1.05);
+      transform: translate(-50%, -50%) scale(1.04);
+    }
+
+    /* 4. A whisper of grain so the dark gradients never band. */
+    .slide__grain {
+      position: absolute;
+      inset: 0;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .96 0 0 0 0 .9 .1 0 0 0 -.035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+    }
+
+    /* 5. The photograph: square, undistorted, colours untouched at its heart.
+          Its outer edges dissolve softly into the layers behind, so there is no frame at all. */
+    .slide__photo {
+      --feather: 16%;
+      --edge:
+        transparent,
+        rgba(0, 0, 0, .12) calc(var(--feather) * .2),
+        rgba(0, 0, 0, .38) calc(var(--feather) * .45),
+        rgba(0, 0, 0, .7)  calc(var(--feather) * .7),
+        rgba(0, 0, 0, .93) calc(var(--feather) * .88),
+        #000 var(--feather),
+        #000 calc(100% - var(--feather)),
+        rgba(0, 0, 0, .93) calc(100% - var(--feather) * .88),
+        rgba(0, 0, 0, .7)  calc(100% - var(--feather) * .7),
+        rgba(0, 0, 0, .38) calc(100% - var(--feather) * .45),
+        rgba(0, 0, 0, .12) calc(100% - var(--feather) * .2),
+        transparent;
+      width: var(--photo);
+      height: var(--photo);
+      object-fit: contain;
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(1.028);
+      transition:
+        opacity var(--fade) var(--ease) var(--photo-delay),
+        transform calc(var(--fade) * 2.4) var(--settle) var(--photo-delay);
+      -webkit-mask-image: linear-gradient(to right, var(--edge)), linear-gradient(to bottom, var(--edge));
+      -webkit-mask-composite: source-in;
+      mask-image: linear-gradient(to right, var(--edge)), linear-gradient(to bottom, var(--edge));
+      mask-composite: intersect;
+    }
+    .slide.is-mounted .slide__photo { will-change: opacity, transform; }
+    .slide.is-visible .slide__photo {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    /* 6. The vignette, over everything: clear at the centre where the faces are,
+          deepening toward the photograph's edges and falling to black at the screen's. */
+    .slide__vignette {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 50%,
+          rgba(var(--shade), 0)   calc(var(--photo) * .3),
+          rgba(var(--shade), .14) calc(var(--photo) * .46),
+          rgba(var(--shade), .45) calc(var(--photo) * .62),
+          rgba(var(--shade), .78) calc(var(--photo) * .85),
+          rgba(var(--shade), .95) calc(var(--photo) * 1.15),
+          rgba(var(--shade), 1)   calc(var(--photo) * 1.5)),
+        radial-gradient(ellipse at 50% 50%,
+          rgba(2, 1, 1, 0)   45%,
+          rgba(2, 1, 1, .7)  78%,
+          rgba(1, 1, 1, .98) 100%);
+    }
+
+    /* ——— The final words: in the dark beneath the photograph, never over a face ——— */
+
+    .dedication {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      top: calc(50% + var(--photo) / 2);
+      z-index: 2;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding:
+        clamp(.75rem, calc((var(--room) - var(--photo)) * .07), 2.5rem)
+        max(1.5rem, env(safe-area-inset-right))
+        0
+        max(1.5rem, env(safe-area-inset-left));
+      pointer-events: none;
+    }
+
+    .dedication__text {
+      margin: 0;
+      max-width: 21em;
+      font-family: "Cormorant Garamond", "Cormorant", "EB Garamond", Garamond, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      font-weight: 500;
+      font-size: clamp(1.05rem, .72rem + .8vw, 1.5rem);
+      line-height: 1.72;
+      letter-spacing: .018em;
+      word-spacing: .03em;
+      text-align: center;
+      text-wrap: balance;
+      hyphens: none;
+      font-kerning: normal;
+      color: rgba(var(--ink), .92);
+      text-shadow: 0 0 1px rgba(0, 0, 0, .4), 0 2px 16px rgba(0, 0, 0, .55);
+
+      opacity: 0;
+      visibility: hidden;
+      filter: blur(6px);
+      transform: translate3d(0, .35em, 0);
+      transition:
+        opacity var(--message-fade) var(--ease),
+        filter calc(var(--message-fade) * 1.1) var(--settle),
+        transform calc(var(--message-fade) * 1.3) var(--settle),
+        visibility 0s linear var(--message-fade);
+    }
+    .dedication.is-revealed .dedication__text {
+      opacity: 1;
+      visibility: visible;
+      filter: blur(0);
+      transform: translate3d(0, 0, 0);
+      transition-delay: 0s;
+    }
+
+    /* ——— Screen shapes ——— */
+
+    /* Upright phones and tablets: the square may take more of the width. */
+    @media (max-aspect-ratio: 4/5) {
+      :root { --photo: min(86vw, calc(var(--room) - 17rem)); }
+    }
+
+    @media (max-width: 600px) {
+      .slide__halo { filter: blur(30px) brightness(.72) saturate(1.1); }
+      .slide__soft { filter: blur(9px) brightness(.88) saturate(1.05); }
+      .dedication__text {
+        font-size: clamp(1rem, 4vw, 1.2rem);
+        line-height: 1.66;
+        letter-spacing: .012em;
+        max-width: min(19em, 86vw);
+      }
+    }
+
+    /* Phones on their side and other short windows. */
+    @media (orientation: landscape) and (max-height: 540px) {
+      :root { --photo: min(64vw, calc(var(--room) - 8rem)); }
+      .dedication__text {
+        font-size: .95rem;
+        line-height: 1.5;
+        max-width: 38em;
+      }
+    }
+
+    /* Keep every fade, but remove movement, drift and blur for people who ask for less motion. */
+    @media (prefers-reduced-motion: reduce) {
+      .slide__atmosphere,
+      .slide.is-visible .slide__atmosphere {
+        transform: translate(-50%, -50%) scale(4.2);
+        transition: none;
+      }
+      .slide__photo,
+      .slide.is-visible .slide__photo { transform: translate(-50%, -50%); }
+      .slide__photo { transition: opacity var(--fade) var(--ease) var(--photo-delay); }
+      .dedication__text,
+      .dedication.is-revealed .dedication__text { transform: none; filter: none; }
+      .dedication__text {
+        transition:
+          opacity var(--message-fade) var(--ease),
+          visibility 0s linear var(--message-fade);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage is-idle" id="stage">
+    <div class="dedication" id="dedication">
+      <p class="dedication__text">Volidam, men kim bo‘lib yetishganim Sizlarning bergan tarbiyangiz, duolaringiz tufaylidir.</p>
+    </div>
+  </main>
+
+  <script>
+  (() => {
+    'use strict';
+
+    /* ——— The photographs, in order ——— */
+    const PHOTOS = [
+      'IMG_5429.PNG',
+      'IMG_5427.JPG',
+      'IMG_5428.JPG',
+      'IMG_5426.PNG',
+      'IMG_5430.JPG'
+    ];
+
+    /* ——— Pacing, in milliseconds (the whole piece is about one minute) ——— */
+    const TIMING = {
+      opening:     1500,   // black before the first photograph begins to appear
+      fade:        4000,   // each fade in and fade out
+      photoDelay:   500,   // the photograph resolves slightly after its own atmosphere
+      overlap:     1000,   // the next memory starts to appear this long after the last one starts to leave
+      hold:        6000,   // how long each photograph stays fully visible
+      finalAlone:  3000,   // the last photograph alone, before the words
+      messageFade: 4500,   // how slowly the words appear
+      waitForFirst: 30000, // longest wait for the first photograph to load
+      waitForAll:  10000,  // then, longest extra wait for the other four
+      waitForLate: 12000   // a photograph still loading when its turn comes gets this long
+    };
+
+    /* ——— Music ——— */
+    const MUSIC = {
+      src: 'background.mp3',
+      volume: 0.15,   // 15%
+      fadeIn: 6,      // seconds
+      crossfade: 6    // seconds of overlap where the track loops, so the join is never heard
+    };
+
+    const rootStyle = document.documentElement.style;
+    rootStyle.setProperty('--fade', TIMING.fade + 'ms');
+    rootStyle.setProperty('--photo-delay', TIMING.photoDelay + 'ms');
+    rootStyle.setProperty('--message-fade', TIMING.messageFade + 'ms');
+
+    const stage = document.getElementById('stage');
+    const dedication = document.getElementById('dedication');
+
+    /* ——— A clock that stops while the page is hidden, so nothing is missed ——— */
+    const clock = (() => {
+      let hiddenAt = document.hidden ? performance.now() : null;
+      let hiddenTotal = 0;
+      document.addEventListener('visibilitychange', () => {
+        const t = performance.now();
+        if (document.hidden) {
+          if (hiddenAt === null) hiddenAt = t;
+        } else if (hiddenAt !== null) {
+          hiddenTotal += t - hiddenAt;
+          hiddenAt = null;
+        }
+      });
+      return () => {
+        const t = performance.now();
+        return t - hiddenTotal - (hiddenAt === null ? 0 : t - hiddenAt);
+      };
+    })();
+
+    function wait(ms) {
+      const end = clock() + ms;
+      return new Promise(resolve => {
+        (function tick() {
+          const left = end - clock();
+          if (left <= 0) return resolve();
+          setTimeout(tick, Math.min(Math.max(left, 16), 500));
+        })();
+      });
+    }
+
+    const withTimeout = (promise, ms, fallback) =>
+      Promise.race([promise, new Promise(r => setTimeout(() => r(fallback), ms))]);
+
+    const nextPaint = () =>
+      new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /* ——— Preloading ——— */
+    const keepAlive = [];
+
+    function preload(src, first) {
+      return new Promise(resolve => {
+        const img = new Image();
+        keepAlive.push(img);
+        let settled = false;
+        const finish = ok => { if (!settled) { settled = true; resolve(ok); } };
+        if (first) img.fetchPriority = 'high';
+        img.decoding = 'async';
+        img.onload = () => {
+          if (typeof img.decode === 'function') img.decode().then(() => finish(true), () => finish(true));
+          else finish(true);
+        };
+        img.onerror = () => finish(false);
+        img.src = src;
+      });
+    }
+
+    function makeImg(src, className) {
+      const img = document.createElement('img');
+      img.className = className;
+      img.alt = '';
+      img.draggable = false;
+      img.decoding = 'async';
+      img.src = src;
+      return img;
+    }
+
+    /* ——— Build the five memories ——— */
+    const slides = PHOTOS.map((src, i) => {
+      const el = document.createElement('div');
+      el.className = 'slide';
+      el.setAttribute('aria-hidden', 'true');
+      const layer = className => {
+        const div = document.createElement('div');
+        div.className = className;
+        return div;
+      };
+      el.appendChild(makeImg(src, 'slide__atmosphere'));
+      el.appendChild(makeImg(src, 'slide__halo'));
+      el.appendChild(makeImg(src, 'slide__soft'));
+      el.appendChild(layer('slide__grain'));
+      el.appendChild(makeImg(src, 'slide__photo'));
+      el.appendChild(layer('slide__vignette'));
+      stage.insertBefore(el, dedication);
+
+      const slide = { el, src, status: 'pending' };
+      slide.ready = preload(src, i === 0).then(ok => {
+        slide.status = ok ? 'ok' : 'failed';
+        if (!ok) console.warn('Could not load ' + src + ' (check the exact file name, including capital letters).');
+        return ok;
+      });
+      return slide;
+    });
+
+    function mount(slide) {
+      if (slide.el.classList.contains('is-mounted')) return;
+      slide.el.classList.add('is-mounted');
+      void slide.el.offsetWidth;
+    }
+
+    function leave(slide) {
+      slide.el.classList.add('is-leaving');
+      wait(TIMING.fade + 800).then(() => {
+        slide.el.classList.remove('is-mounted', 'is-visible', 'is-leaving');
+      });
+    }
+
+    /* ——— The sequence ——— */
+    async function run() {
+      await withTimeout(slides[0].ready, TIMING.waitForFirst);
+      await withTimeout(Promise.all(slides.map(s => s.ready)), TIMING.waitForAll);
+      await wait(TIMING.opening);
+
+      const queue = slides.filter(s => s.status !== 'failed');
+      let current = null;
+
+      for (let i = 0; i < queue.length; i++) {
+        const next = queue[i];
+
+        if (next.status !== 'ok') {
+          const ok = await withTimeout(next.ready, TIMING.waitForLate, false);
+          if (!ok) continue;
+        }
+
+        mount(next);
+        await nextPaint();
+
+        if (current) {
+          leave(current);
+          await wait(TIMING.overlap);
+        }
+
+        next.el.classList.add('is-visible');
+        current = next;
+
+        // Quietly prepare the following photograph out of sight, so it is ready when its moment comes.
+        const following = queue[i + 1];
+        if (following && following.status === 'ok') mount(following);
+
+        await wait(TIMING.fade + TIMING.photoDelay);
+        if (i < queue.length - 1) await wait(TIMING.hold);
+      }
+
+      if (!current) return;
+
+      await wait(TIMING.finalAlone);
+      if (document.fonts && document.fonts.ready) await withTimeout(document.fonts.ready, 3000);
+      await nextPaint();
+      dedication.classList.add('is-revealed');
+    }
+
+    /* ——— Music: no player, no controls ——— */
+    const Music = (() => {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const volumeWorks = (() => {
+        try { const a = document.createElement('audio'); a.volume = 0.5; return Math.abs(a.volume - 0.5) < 0.01; }
+        catch (e) { return false; }
+      })();
+      // iPhones and iPads ignore audio.volume, so there the level is set through Web Audio instead.
+      const useGraph = !volumeWorks && Boolean(AudioCtx) && location.protocol !== 'file:';
+
+      let ctx = null;
+      let active = 0;
+      let started = false;
+      let failed = false;
+      let primed = false;
+      let crossfading = false;
+      let seamless = true;
+      let pausedByHiding = [];
+
+      const makeDeck = () => {
+        const el = new Audio();
+        el.preload = 'auto';
+        el.loop = false;
+        el.src = MUSIC.src;
+        return { el, gain: null, tween: 0 };
+      };
+      const decks = [makeDeck(), makeDeck()];
+
+      function connect() {
+        if (!useGraph || ctx) return;
+        try {
+          ctx = new AudioCtx();
+          decks.forEach(d => {
+            const source = ctx.createMediaElementSource(d.el);
+            d.gain = ctx.createGain();
+            d.gain.gain.value = 0;
+            source.connect(d.gain);
+            d.gain.connect(ctx.destination);
+          });
+        } catch (e) {
+          ctx = null;
+          decks.forEach(d => { d.gain = null; });
+        }
+      }
+
+      function setLevel(d, value) {
+        clearInterval(d.tween);
+        if (d.gain) {
+          const g = d.gain.gain, t = ctx.currentTime;
+          g.cancelScheduledValues(t);
+          g.setValueAtTime(value, t);
+        } else {
+          d.el.volume = value;
+        }
+      }
+
+      function glide(d, to, seconds) {
+        clearInterval(d.tween);
+        if (d.gain) {
+          const g = d.gain.gain, t = ctx.currentTime;
+          g.cancelScheduledValues(t);
+          g.setValueAtTime(g.value, t);
+          g.linearRampToValueAtTime(to, t + seconds);
+          return;
+        }
+        const from = d.el.volume, t0 = performance.now(), span = seconds * 1000;
+        d.tween = setInterval(() => {
+          const p = Math.min(1, (performance.now() - t0) / span);
+          d.el.volume = Math.max(0, Math.min(1, from + (to - from) * p));
+          if (p === 1) clearInterval(d.tween);
+        }, 50);
+      }
+
+      const quietly = p => { if (p && typeof p.catch === 'function') p.catch(() => {}); return p; };
+
+      function audible() {
+        return started && !decks[active].el.paused && (!ctx || ctx.state === 'running');
+      }
+
+      function begin() {
+        if (started) return;
+        started = true;
+        glide(decks[active], MUSIC.volume, MUSIC.fadeIn);
+      }
+
+      function play() {
+        if (failed) return;
+        const d = decks[active];
+        if (!d.el.paused) { begin(); return; }
+        let p;
+        try { p = d.el.play(); } catch (e) { return; }
+        if (p && typeof p.then === 'function') p.then(begin, () => {});
+        else begin();
+      }
+
+      function crossfade() {
+        crossfading = true;
+        const outgoing = decks[active];
+        active = 1 - active;
+        const incoming = decks[active];
+
+        setLevel(incoming, 0);
+        try { incoming.el.currentTime = 0; } catch (e) {}
+
+        const finish = setTimeout(() => {
+          outgoing.el.pause();
+          try { outgoing.el.currentTime = 0; } catch (e) {}
+          setLevel(outgoing, 0);
+          crossfading = false;
+        }, MUSIC.crossfade * 1000 + 300);
+
+        const p = incoming.el.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {
+            // The second copy wasn't allowed to start: settle for a plain loop of the first.
+            clearTimeout(finish);
+            setLevel(incoming, 0);
+            active = 1 - active;
+            seamless = false;
+            crossfading = false;
+            outgoing.el.loop = true;
+            glide(outgoing, MUSIC.volume, 1);
+          });
+        }
+
+        glide(incoming, MUSIC.volume, MUSIC.crossfade);
+        glide(outgoing, 0, MUSIC.crossfade);
+      }
+
+      function nearEnd() {
+        if (!seamless || crossfading || !started) return;
+        const el = decks[active].el, length = el.duration;
+        if (!isFinite(length) || length < MUSIC.crossfade * 3) return;
+        if (length - el.currentTime <= MUSIC.crossfade) crossfade();
+      }
+
+      function onVisibility() {
+        if (!started) return;
+        if (document.hidden) {
+          pausedByHiding = decks.filter(d => !d.el.paused);
+          pausedByHiding.forEach(d => d.el.pause());
+        } else {
+          pausedByHiding.forEach(d => {
+            if (d === decks[active] || crossfading) quietly(d.el.play());
+          });
+          pausedByHiding = [];
+          if (ctx && ctx.state !== 'running') quietly(ctx.resume());
+        }
+      }
+
+      function init() {
+        try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+        connect();
+
+        decks.forEach(d => {
+          setLevel(d, 0);
+          d.el.addEventListener('timeupdate', () => { if (d === decks[active]) nearEnd(); });
+          d.el.addEventListener('ended', () => {
+            // Safety net in case the loop point was missed (e.g. a throttled tab).
+            if (d !== decks[active] || crossfading) return;
+            try { d.el.currentTime = 0; } catch (e) {}
+            quietly(d.el.play());
+          });
+        });
+
+        decks[0].el.addEventListener('loadedmetadata', () => {
+          const length = decks[0].el.duration;
+          if (!isFinite(length) || length < MUSIC.crossfade * 3) {
+            seamless = false;
+            decks[0].el.loop = true;
+          }
+        }, { once: true });
+
+        decks[0].el.addEventListener('error', () => {
+          failed = true;
+          console.warn('Could not load ' + MUSIC.src + '.');
+        }, { once: true });
+
+        document.addEventListener('visibilitychange', onVisibility);
+
+        play();   // Try straight away; most browsers wait for the first tap, click or key instead.
+      }
+
+      // Called on every tap, click or key press; does nothing once the music is playing.
+      function unlock() {
+        if (failed || audible()) return;
+        connect();
+        if (ctx && ctx.state !== 'running') quietly(ctx.resume());
+        if (!primed) {
+          primed = true;
+          const other = decks[1 - active];
+          if (other.el.paused) { try { other.el.load(); } catch (e) {} }
+        }
+        play();
+      }
+
+      return { init, unlock };
+    })();
+
+    /* ——— Keep a phone screen from dimming during the sequence ——— */
+    const Awake = (() => {
+      let sentinel = null;
+      let pending = false;
+      async function request() {
+        if (!('wakeLock' in navigator) || sentinel || pending || document.visibilityState !== 'visible') return;
+        pending = true;
+        try {
+          sentinel = await navigator.wakeLock.request('screen');
+          sentinel.addEventListener('release', () => { sentinel = null; });
+        } catch (e) { /* not allowed yet; the next tap tries again */ }
+        pending = false;
+      }
+      document.addEventListener('visibilitychange', request);
+      return { request };
+    })();
+
+    /* ——— Quiet housekeeping ——— */
+    let idleTimer = 0;
+    window.addEventListener('pointermove', e => {
+      if (e.pointerType && e.pointerType !== 'mouse') return;
+      stage.classList.remove('is-idle');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => stage.classList.add('is-idle'), 2500);
+    }, { passive: true });
+
+    ['dragstart', 'selectstart'].forEach(type =>
+      document.addEventListener(type, e => e.preventDefault()));
+
+    const onGesture = () => { Music.unlock(); Awake.request(); };
+    ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'].forEach(type =>
+      window.addEventListener(type, onGesture, { capture: true, passive: true }));
+
+    Music.init();
+    Awake.request();
+    run().catch(err => console.error(err));
+  })();
+  </script>
+</body>
+</html>
